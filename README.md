@@ -247,7 +247,3 @@ pytest test_dto_routes.py -v
 - [ ] Integration with external AML watchlists and sanctions data
 
 ---
-
-## Author
-
-Built as a take-home interview project. Questions? Open an issue or reach out.
