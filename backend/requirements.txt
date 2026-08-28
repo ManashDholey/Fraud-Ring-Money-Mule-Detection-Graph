@@ -1,0 +1,7 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+neo4j==5.14.1
+python-dotenv==1.0.0
+pydantic==2.5.0
+cors==1.0.1
+networkx==3.2.1  # Optional: used by compute_fraud_rings.py for connected components; Cypher fallback if not installed

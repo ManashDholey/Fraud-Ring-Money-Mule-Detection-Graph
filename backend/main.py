@@ -1,0 +1,214 @@
+"""
+Fraud Detection API - Fully Asynchronous FastAPI Backend
+Uses AsyncGraphDatabase for non-blocking Neo4j operations
+
+Application structure follows clean architecture with modularized routers:
+- routes/accounts.py: Account profiling and risk analysis
+- routes/networks.py: Fraud ring detection and network analysis
+- routes/health.py: Health checks and dashboard metrics
+"""
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import os
+import logging
+from dotenv import load_dotenv
+from typing import AsyncGenerator
+from collections import defaultdict
+from time import time
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Get CORS origins from environment
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+
+from config.settings import settings
+from dbConfig.db_async import close_driver, verify_connectivity, get_driver
+from routes import accounts_router, networks_router, health_router
+from routes.admin import router as admin_router
+from services.auto_seed import auto_seed_if_empty
+from utils.exception_handlers import (
+    general_exception_handler,
+    neo4j_exception_handler,
+    custom_exception_handler,
+    value_error_handler
+)
+from dto.error import CustomException
+from neo4j.exceptions import Neo4jError
+
+# Rate limiting configuration: 100 requests per minute per IP
+RATE_LIMIT_REQUESTS = 100
+RATE_LIMIT_WINDOW_SECONDS = 60
+
+# Track requests per IP
+request_tracker = defaultdict(list)
+
+
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Rate limiting middleware - enforces 100 requests per minute per IP.
+    Protects against runaway request loops and connection pool exhaustion.
+    """
+    client_ip = request.client.host
+    current_time = time()
+    
+    # Get request history for this IP
+    request_times = request_tracker[client_ip]
+    
+    # Remove timestamps older than the rate limit window
+    request_times[:] = [t for t in request_times if current_time - t < RATE_LIMIT_WINDOW_SECONDS]
+    
+    # Check if limit exceeded
+    if len(request_times) >= RATE_LIMIT_REQUESTS:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Too Many Requests",
+                "detail": f"Rate limit exceeded: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW_SECONDS} seconds",
+                "retry_after": RATE_LIMIT_WINDOW_SECONDS
+            }
+        )
+    
+    # Add current request timestamp
+    request_times.append(current_time)
+    
+    # Warn if approaching limit (80% = 80 requests per minute)
+    if len(request_times) > RATE_LIMIT_REQUESTS * 0.8:
+        print(f"⚠️  Rate limit warning: {len(request_times)} requests from {client_ip} in the last minute. " +
+              f"Limit is {RATE_LIMIT_REQUESTS}/min. This may indicate a request loop bug.")
+    
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+    response.headers["X-RateLimit-Remaining"] = str(RATE_LIMIT_REQUESTS - len(request_times))
+    response.headers["X-RateLimit-Reset"] = str(int(current_time) + RATE_LIMIT_WINDOW_SECONDS)
+    
+    return response
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    Manage application lifespan using async context manager.
+    Replaces deprecated @app.on_event decorators.
+    
+    Startup: 
+      - Verify database connectivity
+      - Run auto-seed pipeline if database is empty or partially seeded
+    Shutdown: 
+      - Close database connection gracefully
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Startup phase - execute before app starts
+    try:
+        logger.info("Starting application startup sequence...")
+        
+        # 1. Verify database connectivity
+        await verify_connectivity()
+        logger.info("✓ Database connectivity verified")
+        
+        # 2. Run auto-seed if configured
+        if settings.AUTO_SEED_ON_STARTUP:
+            logger.info("Auto-seed is enabled - checking database state...")
+            driver = get_driver()
+            
+            # RESILIENCE: Don't crash app on seeding failure, let it start degraded
+            seed_result = await auto_seed_if_empty(driver, enabled=True)
+            
+            if seed_result["is_complete"]:
+                logger.info(
+                    f"✓ Database seeding confirmed complete: "
+                    f"{seed_result['seeding_performed'] and 'pipeline ran' or 'data already present'}"
+                )
+            elif seed_result["seeding_performed"]:
+                # Build summary from available results (partial seeding is OK)
+                summary_parts = []
+                
+                if seed_result["seed_summary"]:
+                    summary_parts.append(f"{seed_result['seed_summary'].accounts_created} accounts")
+                
+                if seed_result["fraud_rings_summary"]:
+                    summary_parts.append(f"{seed_result['fraud_rings_summary'].rings_created} fraud rings")
+                
+                if seed_result["risk_scores_summary"]:
+                    summary_parts.append(f"{seed_result['risk_scores_summary'].accounts_scored} scored")
+                
+                summary_str = ", ".join(summary_parts) if summary_parts else "partial stages"
+                logger.info(
+                    f"✓ Auto-seed completed ({summary_str}, "
+                    f"in {seed_result['total_time_seconds']:.1f}s)"
+                )
+            elif seed_result["skipped_reason"]:
+                logger.info(f"Auto-seed skipped: {seed_result['skipped_reason']}")
+            
+            if seed_result["error"]:
+                # Seeding failed - app will start in degraded state
+                logger.warning(
+                    f"⚠ Auto-seed encountered error (app starting in degraded state): "
+                    f"{seed_result['error']}. Retry via /admin/reseed or restart."
+                )
+        else:
+            logger.info("Auto-seed is disabled via AUTO_SEED_ON_STARTUP=false")
+        
+        logger.info("✓ Database lifespan startup complete")
+        
+    except Exception as e:
+        logger.error(f"✗ Database startup FAILED: {str(e)}", exc_info=True)
+        # Don't raise - let app start in degraded state with this error logged
+        # Previously: raise  # Re-raise to prevent app startup with partial/broken data
+    
+    yield  # Application runs here
+    
+    # Shutdown phase - execute after app stops
+    try:
+        await close_driver()
+        logger.info("✓ Database lifespan shutdown complete")
+    except Exception as e:
+        logger.warning(f"⚠ Database shutdown warning: {str(e)}")
+
+
+app = FastAPI(
+    title="Fraud Detection API (Async)",
+    description="Asynchronous graph-based fraud ring and money-mule detection",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Register centralized exception handlers (must be before middleware/routers)
+app.add_exception_handler(CustomException, custom_exception_handler)
+app.add_exception_handler(Neo4jError, neo4j_exception_handler)
+app.add_exception_handler(ValueError, value_error_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
+# Enable CORS for React frontend (add first so it runs last in the middleware stack)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add rate limiting middleware (100 requests per minute per IP)
+# This protects against runaway request loops and connection pool exhaustion
+app.middleware("http")(rate_limit_middleware)
+
+# Register modularized routers
+app.include_router(health_router)
+app.include_router(accounts_router)
+app.include_router(networks_router)
+app.include_router(admin_router)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
