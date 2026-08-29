@@ -22,9 +22,9 @@ class APIService {
   private readonly RATE_LIMIT_WINDOW_MS = 60000 // 1 minute
 
   constructor() {
-    // Use relative paths for same-origin deployment
-    // VITE_API_URL can still override for multi-service setup (e.g. separate backend URL)
-    const baseURL = import.meta.env.VITE_API_URL || '/api'
+    // Support both VITE_API_BASE_URL (from .env) and VITE_API_URL (from env vars)
+    // Defaults to /api for same-origin deployment (recommended)
+    const baseURL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api'
 
     this.client = axios.create({
       baseURL,
