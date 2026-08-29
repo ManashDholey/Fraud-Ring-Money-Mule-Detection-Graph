@@ -2,16 +2,16 @@
 # Stage 1: Builder
 FROM python:3.11-slim as builder
 
-WORKDIR /backend
+WORKDIR /build
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies
+# Copy requirements and install dependencies to a shared location
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -t /build/lib -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.11-slim
@@ -23,19 +23,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python dependencies from builder
-COPY --from=builder /root/.local /root/.local
+# Copy Python dependencies from builder to Python site-packages
+COPY --from=builder /build/lib /usr/local/lib/python3.11/site-packages
 
-# Set PATH to include local Python dependencies
-ENV PATH=/root/.local/bin:$PATH \
-    PYTHONUNBUFFERED=1 \
+# Set Python path and environment variables
+ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000
 
 # Copy application code
 COPY . .
 
-# Create non-root user for security
+# Create non-root user for security (appuser can now access system site-packages)
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /backend
 USER appuser
 
