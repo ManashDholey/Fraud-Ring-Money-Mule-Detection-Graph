@@ -29,7 +29,7 @@ COPY --from=builder /client/dist ./dist
 COPY --from=builder /client/package.json ./
 
 # Create non-root user for security
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /client
+RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Set default port for Railway.app (can be overridden at runtime)
@@ -43,4 +43,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 EXPOSE ${PORT}
 
 # Start application - listen on dynamic PORT environment variable (required for Railway.app)
-CMD sh -c 'serve -s dist -l ${PORT}'
+CMD ["sh", "-c", "serve -s dist -l ${PORT}"]

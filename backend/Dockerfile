@@ -47,4 +47,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 EXPOSE ${PORT}
 
 # Start application - listen on dynamic PORT environment variable (required for Railway.app)
-CMD sh -c 'python -m uvicorn backend.main:backend --host 0.0.0.0 --port ${PORT}'
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
