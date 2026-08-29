@@ -208,6 +208,20 @@ app.include_router(accounts_router)
 app.include_router(networks_router)
 app.include_router(admin_router)
 
+# Serve React static files (mounted AFTER API routes so /api/* routes take precedence)
+# This allows serving the React app from the same origin as the backend
+import os
+from fastapi.staticfiles import StaticFiles
+
+# Check if static directory exists (created during Docker build from frontend/dist)
+static_dir = os.path.join(os.path.dirname(__file__), 'static')
+if os.path.exists(static_dir) and os.listdir(static_dir):
+    logger.info(f"✓ Mounting static files from {static_dir}")
+    app.mount('/', StaticFiles(directory=static_dir, html=True), name='frontend')
+else:
+    logger.warning(f"⚠ Static files directory not found or empty: {static_dir}")
+    logger.info("  For local development, this is normal. For production, rebuild with frontend included.")
+
 
 if __name__ == "__main__":
     import uvicorn

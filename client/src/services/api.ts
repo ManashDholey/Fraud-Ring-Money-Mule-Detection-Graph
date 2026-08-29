@@ -22,7 +22,9 @@ class APIService {
   private readonly RATE_LIMIT_WINDOW_MS = 60000 // 1 minute
 
   constructor() {
-    const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+    // Use relative paths for same-origin deployment
+    // VITE_API_URL can still override for multi-service setup (e.g. separate backend URL)
+    const baseURL = import.meta.env.VITE_API_URL || '/api'
 
     this.client = axios.create({
       baseURL,
