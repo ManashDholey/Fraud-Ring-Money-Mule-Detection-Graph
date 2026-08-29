@@ -112,6 +112,61 @@ This UI is awkward to build on top of relational query results. You'd still need
 
 ---
 
+## Data Seeding
+
+### Overview
+The system includes realistic synthetic fraud data generation scripts that populate the Neo4j graph with:
+- **10,000 accounts**: 7,000 legitimate, 300 known-fraud, 2,700 suspicious
+- **10,000 payment cards**: Distributed across accounts
+- **Simulated transactions**: High-volume chains, money-mule patterns
+- **Shared identity fragments**: Deliberate device, IP, and phone sharing to create fraud rings
+- **Known-fraud anchor nodes**: 300 accounts pre-marked as `is_known_fraud=true` to seed risk propagation
+
+### Loading Seed Data
+
+**Option 1: Via HTTP Admin Endpoint (Recommended)**
+
+Once the backend is running:
+```bash
+cd backend
+python seeds/populate_db.py
+```
+This calls the `/api/admin/reseed` endpoint, which:
+- Clears all existing data
+- Creates 10,000 accounts with realistic fraud patterns
+- Links accounts via shared devices, IPs, and phones to form fraud rings
+- Generates 3,500+ transactions including money-mule chains
+- Returns summary of patterns created
+
+**Option 2: Direct Script Execution**
+
+If you prefer direct database connection:
+```bash
+cd backend
+python -c "from seeds.seed_data_generator_async import SeedDataGenerator; import asyncio; gen = SeedDataGenerator(); asyncio.run(gen.generate_all()); asyncio.run(gen.close())"
+```
+
+### Verifying Data Load
+
+Once seeded, check the dashboard:
+```bash
+curl http://localhost:8000/api/dashboard
+```
+
+Expected output includes:
+```json
+{
+  "totalAccounts": 10000,
+  "knownFraudAccounts": 300,
+  "detectedFraudRings": 5,
+  "transactionsTotal": 3500,
+  "sharedDevices": 515,
+  "sharedIPs": 610
+}
+```
+
+---
+
 ## Quick Start
 
 ### Backend
@@ -171,34 +226,92 @@ npm run dev
 
 ---
 
-## Schema Snapshot
+## Schema: Graph Data Model
+
+### Visual Schema Diagram
+
+```
+                    ┌─────────────┐
+                    │   Device    │
+                    │ fingerprint │
+                    └──────┬──────┘
+                           │
+                    ┌──────┴──────┐
+                    │  USES_DEVICE│ (bidirectional)
+                    └──────┬──────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+   ┌────▼────┐         ┌────▼────┐      ┌────▼────┐
+   │ Account │◄────────┤ Account │◄─────┤ Account │  (SHARED_DEVICE)
+   │         │         │         │      │         │
+   └────┬────┘         └────┬────┘      └────┬────┘
+        │                   │                 │
+  ACCESSED_FROM_IP          │          HAS_CARD
+        │                   │                 │
+   ┌────▼──────┐   ┌────────▼────┐      ┌────▼────┐
+   │ IPAddress │   │ PhoneNumber │      │  Card   │
+   │    ip     │   │   number    │      │  token  │
+   └───────────┘   └─────┬───────┘      └─────────┘
+                         │
+                  USES_PHONE (bidirectional)
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+         ┌────▼────┐           ┌────▼────┐
+         │ Account │◄──────────┤ Account │  (SHARED_PHONE)
+         └────┬────┘           └────┬────┘
+              │                     │
+              └─────────────────────┘
+                  TRANSACTED_WITH
+                (amount, timestamp)
+```
+
+### Node & Relationship Details
 
 **Nodes:**
-- `Account`: id, name, email, risk_score, flagged
-- `Device`: fingerprint, user_agent, last_seen
+- `Account`: id, name, email, status, risk_level, is_known_fraud, created_at
+- `Device`: device_fingerprint, user_agent, last_seen
 - `PhoneNumber`: number, country_code, verified
 - `IPAddress`: ip, country, flagged
-- `Card`: card_token, brand, last_four
-- `Transaction`: id, amount, timestamp, direction
+- `Card`: card_number, card_type, status, created_at
 
-**Relationships:**
-- `:OWNED_BY` — Account → Device/Phone/Card
-- `:SHARED_DEVICE` — Account ↔ Account (via same device)
-- `:SHARED_PHONE` — Account ↔ Account (via same phone)
-- `:SHARED_IP` — Account ↔ Account (via same IP)
-- `:TRANSACTED_WITH` — Account → Account (with amount, timestamp)
+**Relationships (with properties):**
+- `:USES_DEVICE` — Account → Device (bidirectional edge for shared-device queries)
+- `:USES_PHONE` — Account → PhoneNumber (bidirectional)
+- `:ACCESSED_FROM_IP` — Account → IPAddress (bidirectional)
+- `:HAS_CARD` — Account → Card
+- `:SHARED_DEVICE` — Account ↔ Account (derived: accounts sharing same device)
+- `:SHARED_PHONE` — Account ↔ Account (derived: accounts sharing same phone)
+- `:SHARED_IP` — Account ↔ Account (derived: accounts sharing same IP)
+- `:TRANSACTED_WITH` — Account → Account (with amount, timestamp, direction)
 
 ---
 
 ## Key Queries
 
-**Find a fraud ring around account #42:**
+**Find a fraud ring around a flagged account (parameterized):**
 ```cypher
-MATCH ring=(a:Account {id: 42})-[:SHARED_DEVICE|SHARED_PHONE|SHARED_IP*1..3]-(b:Account)
-WHERE b.risk_score > 0.3
-RETURN b.id, length(ring) AS hops, collect(relationships(ring)) AS path_edges
-ORDER BY b.risk_score DESC
+MATCH ring=(a:Account {account_id: $account_id})-[:SHARED_DEVICE|SHARED_PHONE|SHARED_IP*1..3]-(b:Account)
+WHERE b.risk_level IN ['MEDIUM', 'CRITICAL']
+RETURN b.account_id, b.risk_level, length(ring) AS hops, collect(relationships(ring)) AS path_edges
+ORDER BY b.risk_level DESC
 LIMIT 20
+```
+
+**Driver usage (Python):**
+```python
+async def find_fraud_ring(account_id: str):
+    query = """
+    MATCH ring=(a:Account {account_id: $account_id})-[:SHARED_DEVICE|SHARED_PHONE|SHARED_IP*1..3]-(b:Account)
+    WHERE b.risk_level IN ['MEDIUM', 'CRITICAL']
+    RETURN b.account_id, b.risk_level, length(ring) AS hops
+    """
+    async with driver.session() as session:
+        result = await session.execute_read(
+            lambda tx: tx.run(query, {"account_id": account_id})
+        )
+        return await result.data()
 ```
 
 **Detect money-mule chains (high-frequency, multi-step transfers):**
