@@ -2,7 +2,7 @@
 # Stage 1: Builder
 FROM node:18-alpine as builder
 
-WORKDIR /app
+WORKDIR /client
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -25,11 +25,11 @@ WORKDIR /app
 RUN npm install -g serve
 
 # Copy built application from builder
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./
+COPY --from=builder /client/dist ./dist
+COPY --from=builder /client/package.json ./
 
 # Create non-root user for security
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
+RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /client
 USER appuser
 
 # Set default port for Railway.app (can be overridden at runtime)

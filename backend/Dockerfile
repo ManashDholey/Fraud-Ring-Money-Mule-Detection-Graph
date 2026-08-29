@@ -2,7 +2,7 @@
 # Stage 1: Builder
 FROM python:3.11-slim as builder
 
-WORKDIR /app
+WORKDIR /backend
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,7 +16,7 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 # Stage 2: Runtime
 FROM python:3.11-slim
 
-WORKDIR /app
+WORKDIR /backend
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +36,7 @@ ENV PATH=/root/.local/bin:$PATH \
 COPY . .
 
 # Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /backend
 USER appuser
 
 # Health check
@@ -47,4 +47,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 EXPOSE ${PORT}
 
 # Start application - listen on dynamic PORT environment variable (required for Railway.app)
-CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}'
+CMD sh -c 'python -m uvicorn backend.main:backend --host 0.0.0.0 --port ${PORT}'
