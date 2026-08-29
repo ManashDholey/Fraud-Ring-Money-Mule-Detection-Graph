@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from typing import AsyncGenerator
 from collections import defaultdict
 from time import time
+import asyncio
 
 # Load environment variables from .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
@@ -95,79 +96,99 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 
+async def _run_background_seeding():
+    """
+    Background task to run database seeding without blocking app startup.
+    Called via asyncio.create_task() after app is ready to serve requests.
+    This prevents 502 Bad Gateway errors from startup timeout during health checks.
+    """
+    logger_bg = logging.getLogger(__name__)
+    try:
+        if not settings.AUTO_SEED_ON_STARTUP:
+            logger_bg.info("Auto-seed is disabled via AUTO_SEED_ON_STARTUP=false")
+            return
+        
+        logger_bg.info("🔄 [Background] Auto-seed pipeline starting...")
+        driver = get_driver()
+        
+        # Run seeding in background without blocking startup
+        seed_result = await auto_seed_if_empty(driver, enabled=True)
+        
+        if seed_result["is_complete"]:
+            logger_bg.info(
+                f"✓ [Background] Database seeding confirmed complete: "
+                f"{seed_result['seeding_performed'] and 'pipeline ran' or 'data already present'}"
+            )
+        elif seed_result["seeding_performed"]:
+            # Build summary from available results
+            summary_parts = []
+            if seed_result["seed_summary"]:
+                summary_parts.append(f"{seed_result['seed_summary'].accounts_created} accounts")
+            if seed_result["fraud_rings_summary"]:
+                summary_parts.append(f"{seed_result['fraud_rings_summary'].rings_created} fraud rings")
+            if seed_result["risk_scores_summary"]:
+                summary_parts.append(f"{seed_result['risk_scores_summary'].accounts_scored} scored")
+            
+            summary_str = ", ".join(summary_parts) if summary_parts else "partial stages"
+            logger_bg.info(
+                f"✓ [Background] Auto-seed completed ({summary_str}, "
+                f"in {seed_result['total_time_seconds']:.1f}s)"
+            )
+        elif seed_result["skipped_reason"]:
+            logger_bg.info(f"✓ [Background] Auto-seed skipped: {seed_result['skipped_reason']}")
+        
+        if seed_result["error"]:
+            logger_bg.warning(
+                f"⚠ [Background] Auto-seed encountered error: "
+                f"{seed_result['error']}. Retry via /admin/reseed"
+            )
+    except Exception as e:
+        logger_bg.error(f"✗ [Background] Auto-seed pipeline failed: {str(e)}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Manage application lifespan using async context manager.
     Replaces deprecated @app.on_event decorators.
     
-    Startup: 
-      - Verify database connectivity
-      - Run auto-seed pipeline if database is empty or partially seeded
+    Startup (NON-BLOCKING): 
+      - Verify database connectivity only (~1-2 seconds)
+      - Schedule seeding as background task (does NOT block startup)
+      - App is ready to serve requests immediately
+    
+    Background:
+      - Auto-seed pipeline runs asynchronously if configured
+    
     Shutdown: 
       - Close database connection gracefully
     """
     logger = logging.getLogger(__name__)
     
-    # Startup phase - execute before app starts
+    # Startup phase - FAST and NON-BLOCKING
     try:
-        logger.info("Starting application startup sequence...")
+        logger.info("⏱️  Starting application startup sequence...")
         
-        # 1. Verify database connectivity
+        # 1. Verify database connectivity (should be < 2 seconds)
         await verify_connectivity()
         logger.info("✓ Database connectivity verified")
         
-        # 2. Run auto-seed if configured
+        # 2. Schedule auto-seed as background task (does NOT await/block)
         if settings.AUTO_SEED_ON_STARTUP:
-            logger.info("Auto-seed is enabled - checking database state...")
-            driver = get_driver()
-            
-            # RESILIENCE: Don't crash app on seeding failure, let it start degraded
-            seed_result = await auto_seed_if_empty(driver, enabled=True)
-            
-            if seed_result["is_complete"]:
-                logger.info(
-                    f"✓ Database seeding confirmed complete: "
-                    f"{seed_result['seeding_performed'] and 'pipeline ran' or 'data already present'}"
-                )
-            elif seed_result["seeding_performed"]:
-                # Build summary from available results (partial seeding is OK)
-                summary_parts = []
-                
-                if seed_result["seed_summary"]:
-                    summary_parts.append(f"{seed_result['seed_summary'].accounts_created} accounts")
-                
-                if seed_result["fraud_rings_summary"]:
-                    summary_parts.append(f"{seed_result['fraud_rings_summary'].rings_created} fraud rings")
-                
-                if seed_result["risk_scores_summary"]:
-                    summary_parts.append(f"{seed_result['risk_scores_summary'].accounts_scored} scored")
-                
-                summary_str = ", ".join(summary_parts) if summary_parts else "partial stages"
-                logger.info(
-                    f"✓ Auto-seed completed ({summary_str}, "
-                    f"in {seed_result['total_time_seconds']:.1f}s)"
-                )
-            elif seed_result["skipped_reason"]:
-                logger.info(f"Auto-seed skipped: {seed_result['skipped_reason']}")
-            
-            if seed_result["error"]:
-                # Seeding failed - app will start in degraded state
-                logger.warning(
-                    f"⚠ Auto-seed encountered error (app starting in degraded state): "
-                    f"{seed_result['error']}. Retry via /admin/reseed or restart."
-                )
+            logger.info("📌 Auto-seed is enabled - scheduling as background task")
+            # Create background task that runs WITHOUT blocking startup
+            asyncio.create_task(_run_background_seeding())
+            logger.info("   (App is ready to serve requests immediately)")
         else:
             logger.info("Auto-seed is disabled via AUTO_SEED_ON_STARTUP=false")
         
-        logger.info("✓ Database lifespan startup complete")
+        logger.info("✓ Application startup complete and ready to serve requests")
         
     except Exception as e:
         logger.error(f"✗ Database startup FAILED: {str(e)}", exc_info=True)
-        # Don't raise - let app start in degraded state with this error logged
-        # Previously: raise  # Re-raise to prevent app startup with partial/broken data
+        # Don't raise - let app start in degraded state
     
-    yield  # Application runs here
+    yield  # Application runs here and serves requests
     
     # Shutdown phase - execute after app stops
     try:
