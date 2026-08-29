@@ -5,6 +5,7 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "restartPolicyMaxRetries": 5
+    "restartPolicyMaxRetries": 5,
+    "startCommand": "serve -s dist -l ${PORT}"
   }
 }
