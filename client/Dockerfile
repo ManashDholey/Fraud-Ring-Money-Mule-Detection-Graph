@@ -43,5 +43,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Expose port (Railway will override this at runtime)
 EXPOSE ${PORT}
 
-# Start application - listen on dynamic PORT environment variable (required for Railway.app)
-CMD ["sh", "-c", "serve -s dist -l ${PORT}"]
+# Start application - bind to all interfaces (0.0.0.0) for external accessibility
+# -l tcp://0.0.0.0:${PORT} ensures container is reachable from host and external traffic
+CMD ["sh", "-c", "serve -s dist -l tcp://0.0.0.0:${PORT}"]
