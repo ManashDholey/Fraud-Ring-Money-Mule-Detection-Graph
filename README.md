@@ -167,6 +167,97 @@ Expected output includes:
 
 ---
 
+## Docker Deployment
+
+### Option 1: Docker Compose (Local Development)
+
+Run both backend and frontend in containers with a single command:
+
+```bash
+# 1. Copy environment template and add your Neo4j credentials
+cp .env.example .env
+# Edit .env and set:
+#   COGNODB_URI=bolt+s://your-host:7687
+#   COGNODB_USERNAME=neo4j
+#   COGNODB_PASSWORD=your_password
+
+# 2. Build and start containers
+docker-compose up --build
+
+# Services will be available at:
+# - Frontend: http://localhost:3000
+# - Backend API: http://localhost:8000
+# - API Docs: http://localhost:8000/docs
+```
+
+**Features:**
+- Environment variables use sensible defaults for localhost development
+- `CORS_ORIGINS` defaults to `http://localhost:3000` (can be overridden)
+- `VITE_API_URL` defaults to `http://localhost:8000/api`
+- Services managed: Frontend (React + Vite), Backend (FastAPI), optional local Neo4j
+
+**For detailed configuration options**, see [DOCKER_COMPOSE_GUIDE.md](./DOCKER_COMPOSE_GUIDE.md)
+
+### Option 2: Individual Containers
+
+Build and run backend and frontend separately:
+
+```bash
+# Backend
+cd backend
+docker build -t fraud-detection-backend .
+docker run -p 8000:8000 \
+  -e COGNODB_URI=bolt+s://... \
+  -e COGNODB_USERNAME=neo4j \
+  -e COGNODB_PASSWORD=password \
+  fraud-detection-backend
+
+# Frontend (in another terminal)
+cd client
+docker build -t fraud-detection-frontend .
+docker run -p 3000:3000 \
+  -e VITE_API_URL=http://localhost:8000/api \
+  fraud-detection-frontend
+```
+
+### Docker Images
+
+- **Backend**: Multi-stage Python 3.11-slim build with health checks, listens on dynamic `$PORT` (Railway-compatible)
+- **Frontend**: Multi-stage Node 18-alpine build with production optimizations, listens on dynamic `$PORT` (Railway-compatible)
+- **Base layers**: Kept small for faster pull/push
+
+---
+
+## Railway.app Deployment
+
+Deploy the entire stack on [Railway.app](https://railway.app) — a cloud platform with built-in Docker support, free tier, and automatic TLS.
+
+### Quick Deploy
+
+1. Push this repo to GitHub
+2. Go to https://railway.app and sign up (free tier)
+3. Create **New Project** → **Deploy from GitHub**
+4. Select this repository
+5. Railway auto-detects the Dockerfiles for both frontend and backend
+6. Set environment variables:
+   - **Backend**: `COGNODB_URI`, `COGNODB_USERNAME`, `COGNODB_PASSWORD`, `AUTO_SEED_ON_STARTUP=true`
+   - **Frontend**: `VITE_API_URL=https://your-backend-url.railway.app/api`
+7. Deploy — services auto-scale and get HTTPS URLs
+
+### Key Features on Railway
+
+- **Automatic port assignment**: Dockerfiles configured to use `$PORT` environment variable
+- **Health checks**: Both services have health checks configured in `railway.json`
+- **Automatic HTTPS**: Free TLS certificates for all deployments
+- **GitHub auto-deploy**: Push to main branch → auto-deploys
+- **Persistent environment**: Set variables once, persists across deployments
+
+### Detailed Setup
+
+For step-by-step instructions including troubleshooting, domain setup, and scaling, see [RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md).
+
+---
+
 ## Quick Start
 
 ### Backend
