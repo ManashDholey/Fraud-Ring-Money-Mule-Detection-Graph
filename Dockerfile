@@ -7,8 +7,9 @@ WORKDIR /build/client
 # Copy client files
 COPY client/package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (use npm install since we may not have package-lock.json)
+# For production builds with reproducible versions, commit package-lock.json and use: npm ci
+RUN npm install
 
 # Copy source and build
 COPY client/ .
