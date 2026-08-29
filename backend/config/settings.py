@@ -32,7 +32,15 @@ class Settings:
     )
 
     # CORS configuration
-    CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+    # Set CORS_ORIGINS env var to comma-separated list of allowed origins
+    # Default allows local dev (3000, 5173) and Railway-hosted frontend
+    # Production: set to frontend origin(s) to prevent unauthorized cross-origin access
+    CORS_ORIGINS: list = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,"
+        "http://localhost:5173,"
+        "https://fraud-ring-money-mule-detection-graph-production.up.railway.app"
+    ).split(",")
 
 
 # Global settings instance
