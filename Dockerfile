@@ -1,6 +1,6 @@
 # Multi-stage build: React frontend + FastAPI backend in single container
 # Stage 1: Build React frontend
-FROM node:18-alpine as client-builder
+FROM node:18-alpine AS client-builder
 
 WORKDIR /build/client
 

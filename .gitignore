@@ -48,8 +48,8 @@ Thumbs.db
 
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
+# Note: package-lock.json is NOT ignored - we track it for reproducible builds on Render
 
 # Logs
 *.log
