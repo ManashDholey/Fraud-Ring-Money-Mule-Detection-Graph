@@ -62,7 +62,7 @@ async def _create_uniqueness_constraint(driver: AsyncDriver, verbose: bool = Tru
                     logger.info("✓ Unique constraint on Account.account_id already exists")
                 return True
             
-            # Create the constraint
+            # Create the constraint using Neo4j 5.x syntax
             await session.run(
                 "CREATE CONSTRAINT account_id_uniqueness IF NOT EXISTS "
                 "FOR (a:Account) REQUIRE a.account_id IS UNIQUE"
@@ -73,23 +73,12 @@ async def _create_uniqueness_constraint(driver: AsyncDriver, verbose: bool = Tru
             return True
             
     except Exception as e:
-        # Some Neo4j versions use different constraint syntax
-        try:
-            async with driver.session() as session:
-                await session.run(
-                    "CREATE CONSTRAINT account_id_uniqueness IF NOT EXISTS "
-                    "ON (a:Account) ASSERT a.account_id IS UNIQUE"
-                )
-                if verbose:
-                    logger.info("✓ Created unique constraint on Account.account_id (legacy syntax)")
-                return True
-        except Exception as e2:
-            logger.warning(
-                f"⚠ Could not create unique constraint on Account.account_id. "
-                f"Database may not support constraints or constraint already exists. "
-                f"Errors: {str(e)}, {str(e2)}"
-            )
-            return False
+        logger.warning(
+            f"⚠ Could not create unique constraint on Account.account_id. "
+            f"Database may not support constraints or constraint already exists. "
+            f"Error: {str(e)}"
+        )
+        return False
 
 
 async def _validate_seed_data(seed_config: dict, verbose: bool = True) -> Dict[str, List[str]]:

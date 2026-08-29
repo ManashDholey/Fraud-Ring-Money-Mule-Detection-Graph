@@ -81,22 +81,33 @@ class DatabaseCompletenessCheck:
 
         try:
             async with self.driver.session() as session:
-                # Single comprehensive query to check everything
+                # Comprehensive query to check all seeding stages (Neo4j 5.x compatible)
                 completion_query = """
-                RETURN {
-                    account_count: (MATCH (a:Account) RETURN count(a)) [0],
-                    transaction_count: (MATCH ()-[r:TRANSACTED_WITH]->() RETURN count(r)) [0],
-                    fraud_ring_count: (MATCH (r:FraudRing) RETURN count(r)) [0],
-                    scored_accounts: (MATCH (a:Account) WHERE a.risk_score IS NOT NULL RETURN count(a)) [0],
-                    has_device_label: (MATCH (d:Device) RETURN count(d)) [0] > 0,
-                    has_ip_label: (MATCH (i:IPAddress) RETURN count(i)) [0] > 0,
-                    has_phone_label: (MATCH (p:PhoneNumber) RETURN count(p)) [0] > 0,
-                    has_uses_device_rel: (MATCH ()-[r:USES_DEVICE]->() RETURN count(r)) [0] > 0,
-                    has_phone_rel: (MATCH ()-[r:HAS_PHONE]->() RETURN count(r)) [0] > 0,
-                    has_ip_rel: (MATCH ()-[r:ACCESSED_FROM_IP]->() RETURN count(r)) [0] > 0,
-                    has_member_rel: (MATCH ()-[r:MEMBER_OF]->() RETURN count(r)) [0] > 0,
-                    has_fraud_ring_links: (MATCH (a:Account)-[r:IS_IN_RING|CONNECTED_TO_RING]->() RETURN count(r)) [0] > 0
-                } as checks
+                MATCH (a:Account)
+                OPTIONAL MATCH (d:Device)
+                OPTIONAL MATCH (i:IPAddress)
+                OPTIONAL MATCH (p:PhoneNumber)
+                OPTIONAL MATCH (r:FraudRing)
+                OPTIONAL MATCH ()-[t:TRANSACTED_WITH]->()
+                OPTIONAL MATCH ()-[ud:USES_DEVICE]->()
+                OPTIONAL MATCH ()-[hp:HAS_PHONE]->()
+                OPTIONAL MATCH ()-[af:ACCESSED_FROM_IP]->()
+                OPTIONAL MATCH ()-[m:MEMBER_OF]->()
+                OPTIONAL MATCH ()-[ring:IS_IN_RING|CONNECTED_TO_RING]->()
+                OPTIONAL MATCH (scored:Account) WHERE scored.risk_score IS NOT NULL
+                RETURN 
+                    count(DISTINCT a) as account_count,
+                    count(DISTINCT t) as transaction_count,
+                    count(DISTINCT r) as fraud_ring_count,
+                    count(DISTINCT scored) as scored_accounts,
+                    count(DISTINCT d) > 0 as has_device_label,
+                    count(DISTINCT i) > 0 as has_ip_label,
+                    count(DISTINCT p) > 0 as has_phone_label,
+                    count(DISTINCT ud) > 0 as has_uses_device_rel,
+                    count(DISTINCT hp) > 0 as has_phone_rel,
+                    count(DISTINCT af) > 0 as has_ip_rel,
+                    count(DISTINCT m) > 0 as has_member_rel,
+                    count(DISTINCT ring) > 0 as has_fraud_ring_links
                 """
                 
                 result = await session.run(completion_query)
@@ -105,7 +116,7 @@ class DatabaseCompletenessCheck:
                 if not records:
                     return result_info
 
-                checks = records[0].get("checks", {})
+                checks = records[0]
                 
                 # Extract counts
                 result_info["account_count"] = checks.get("account_count", 0) or 0
