@@ -46,4 +46,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 EXPOSE ${PORT}
 
 # Start application - listen on dynamic PORT environment variable (required for Railway.app)
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+# Use shell form (not exec form) so $PORT environment variable is expanded by shell
+CMD python -m uvicorn main:app --host 0.0.0.0 --port $PORT
