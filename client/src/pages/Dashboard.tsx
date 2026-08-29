@@ -71,25 +71,25 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Risk Distribution Chart */}
-      <div className="bg-white rounded-lg border border-slate-200 p-6">
+      <div className="bg-white rounded-lg border border-slate-200 p-4 md:p-6">
         <h2 className="text-lg font-semibold text-slate-900 mb-6">Risk Distribution</h2>
         {isLoading ? (
           <div className="flex items-center justify-center h-32">
             <Loader className="w-6 h-6 animate-spin text-blue-600" />
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 auto-rows-max">
             {distribution.map((item) => (
-              <div key={item.label} className="text-center">
-                <div className="mb-4">
-                  <div className="relative w-20 h-20 mx-auto">
+              <div key={item.label} className="text-center flex flex-col items-center justify-start">
+                <div className="mb-4 w-full flex justify-center">
+                  <div className="relative w-16 h-16 md:w-20 md:h-20 flex-shrink-0">
                     <div className={`absolute inset-0 rounded-full ${item.color} opacity-20`} />
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-xl font-bold text-slate-900">{item.count}</span>
+                      <span className="text-base md:text-xl font-bold text-slate-900 text-center px-1">{item.count}</span>
                     </div>
                   </div>
                 </div>
-                <p className="text-sm font-medium text-slate-600">{item.label}</p>
+                <p className="text-xs md:text-sm font-medium text-slate-600 break-words max-w-full">{item.label}</p>
                 <p className="text-xs text-slate-500">{item.percentage}%</p>
               </div>
             ))}
