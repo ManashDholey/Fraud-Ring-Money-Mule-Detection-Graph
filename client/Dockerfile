@@ -28,9 +28,10 @@ RUN npm install -g serve
 COPY --from=builder /client/dist ./dist
 COPY --from=builder /client/package.json ./
 
-# Create non-root user for security
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# Reuse existing non-root 'node' user from node:18-alpine base image
+# (node user already has uid 1000, no need to create a new user)
+RUN chown -R node:node /app
+USER node
 
 # Set default port for Railway.app (can be overridden at runtime)
 ENV PORT=3000
