@@ -41,13 +41,6 @@ driver = AsyncGraphDatabase.driver(
     # === CONNECTION POOL RESILIENCE ===
     max_connection_pool_size=50,           # Max concurrent connections (reasonable for fraud dashboard)
     
-    # === LIVENESS CHECK (MOST CRITICAL FOR WINDOWS) ===
-    # If a pooled connection is idle > liveness_check_timeout seconds, ping it before handing
-    # it out to a query. Detects Windows socket timeouts that would otherwise cause
-    # ServiceUnavailable on first query after idle period.
-    liveness_check_timeout=60.0,           # 60s: sensible for Fraud dashboard query patterns
-                                           # (not high-frequency, ok with small delay for ping)
-    
     # === CONNECTION RECYCLING ===
     # Windows/managed instances drop idle connections after ~20min. Force refresh before that.
     # Also prevents accumulation of stale protocol state on very long-lived connections.
@@ -62,6 +55,8 @@ driver = AsyncGraphDatabase.driver(
     # === TCP KEEPALIVE ===
     # keep_alive=True is enabled by default (connection_config feature in driver v5.14+)
     # Sends periodic TCP keepalive packets to detect dead peer sooner (OS-level detection)
+    # Note: liveness_check_timeout is not supported in neo4j==5.14.1; use connection_acquisition_timeout
+    #       and TCP keepalive for connection health monitoring
 )
 
 
